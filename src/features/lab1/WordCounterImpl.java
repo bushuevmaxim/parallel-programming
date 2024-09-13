@@ -15,13 +15,12 @@ public class WordCounterImpl implements IWordCounter {
         Map<String, Integer> countOfWords = new HashMap<>();
         for (String word : words) {
 
-            if (countOfWords.containsKey(word)) {
+            final int previousValue = countOfWords.getOrDefault(word, 0);
 
-                int currentValue = countOfWords.get(word);
-                countOfWords.put(word, currentValue + 1);
-            } else {
-                countOfWords.put(word, 1);
-            }
+            final int actualValue = previousValue + 1;
+
+            countOfWords.put(word, actualValue);
+
         }
 
         return countOfWords;

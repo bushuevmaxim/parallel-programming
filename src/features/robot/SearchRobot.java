@@ -5,6 +5,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
+import java.util.concurrent.CountDownLatch;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -18,23 +19,53 @@ public class SearchRobot {
     }
 
     public static void buildInheritanceIndex(String projectPath) {
+
         try {
             Map<String, List<String>> inheritanceIndex = new HashMap<>();
             try (Stream<Path> pathStream
                     = Files.walk(Paths.get(projectPath))) {
-                pathStream.filter(Files::isRegularFile).map(path -> load(path)).filter((fileContent -> filterFile(fileContent)))
-                        .forEach(rawString -> {
-                            final String childEntityName = parseChildName(rawString);
 
-                            final List<String> parents = parseParentsNames(rawString);
+                List<Path> filePathes = pathStream.filter(Files::isRegularFile).toList();
 
-                            final List<String> classes = inheritanceIndex.getOrDefault(rawString, new ArrayList<>());
+                int countOfFiles = filePathes.size();
+
+                CountDownLatch latch = new CountDownLatch(countOfFiles);
+
+                System.out.println(countOfFiles);
+
+                for (Path filePath : filePathes) {
+
+                    Thread thread = new Thread(() -> {
+
+                        try {
+                            final String fileContent = processFile(filePath);
+
+                            final String childEntityName = parseChildName(fileContent);
+
+                            final List<String> parents = parseParentsNames(fileContent);
+
+                            final List<String> classes = inheritanceIndex.getOrDefault(fileContent, new ArrayList<>());
 
                             classes.addAll(parents);
 
                             inheritanceIndex.put(childEntityName, classes);
-                        });
+                        } finally {
+                            latch.countDown();
+                        }
+                    });
+
+                    thread.start();
+
+                }
+
+                try {
+                    latch.await();
+                } catch (InterruptedException e) {
+                    System.out.println(e);
+                }
+
             }
+
             inheritanceIndex.forEach((className, parents) -> {
                 System.out.println(className + " -> "
                         + parents);
@@ -43,6 +74,20 @@ public class SearchRobot {
             System.out.println(e);
 
         }
+    }
+
+    public static String processFile(Path path) {
+
+        final String file = load(path);
+
+        final Boolean isValidFile = filterFile(file);
+
+        if (!isValidFile) {
+            return "";
+        }
+
+        return file;
+
     }
 
     private static Boolean filterFile(String fileContent) {

@@ -46,11 +46,11 @@ public class SearchRobot {
                             final String childEntityName = parseChildName(fileContent);
 
                             final List<String> parents = parseParentsNames(fileContent);
-
+                            locker.lock();
                             final List<String> classes = inheritanceIndex.getOrDefault(fileContent, new ArrayList<>());
 
                             classes.addAll(parents);
-                            locker.lock();
+
                             inheritanceIndex.put(childEntityName, classes);
 
                         } finally {

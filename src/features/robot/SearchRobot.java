@@ -14,7 +14,7 @@ import java.util.stream.Stream;
 public class SearchRobot {
 
     public static void main(String[] args) {
-        String projectPath = "unknownpackage";
+        String projectPath = "/Users/max/Documents/spring-framework-main";
         buildInheritanceIndex(projectPath);
     }
 

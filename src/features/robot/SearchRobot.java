@@ -6,6 +6,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -33,6 +34,8 @@ public class SearchRobot {
 
                 System.out.println(countOfFiles);
 
+                ReentrantLock locker = new ReentrantLock();
+
                 for (Path filePath : filePathes) {
 
                     Thread thread = new Thread(() -> {
@@ -47,10 +50,12 @@ public class SearchRobot {
                             final List<String> classes = inheritanceIndex.getOrDefault(fileContent, new ArrayList<>());
 
                             classes.addAll(parents);
-
+                            locker.lock();
                             inheritanceIndex.put(childEntityName, classes);
+
                         } finally {
                             latch.countDown();
+                            locker.unlock();
                         }
                     });
 

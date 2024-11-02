@@ -10,145 +10,85 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 public class SearchRobot {
 
-    public static void main(String[] args) {
-        String projectPath = "/Users/max/Documents/spring-framework-main";
-        buildInheritanceIndex(projectPath);
-    }
+    private static final ReentrantLock lock = new ReentrantLock();
 
-    public static void buildInheritanceIndex(String projectPath) {
+    public static void main(String[] args) {
+        String directoryPath = "/Users/max/Documents/spring-framework-main";
+        Map<String, List<String>> inheritanceIndex = new HashMap<>();
 
         try {
-            Map<String, List<String>> inheritanceIndex = new HashMap<>();
-            try (Stream<Path> pathStream
-                    = Files.walk(Paths.get(projectPath))) {
+            List<String> javaFiles = Files.walk(Paths.get(directoryPath))
+                    .filter(Files::isRegularFile)
+                    .filter(file -> file.toString().endsWith(".java"))
+                    .map(Path::toString)
+                    .collect(Collectors.toList());
 
-                List<Path> filePathes = pathStream.filter(Files::isRegularFile).toList();
+            CountDownLatch latch = new CountDownLatch(javaFiles.size());
 
-                int countOfFiles = filePathes.size();
-
-                CountDownLatch latch = new CountDownLatch(countOfFiles);
-
-                System.out.println(countOfFiles);
-
-                ReentrantLock locker = new ReentrantLock();
-
-                for (Path filePath : filePathes) {
-
-                    Thread thread = new Thread(() -> {
-
-                        try {
-                            final String fileContent = processFile(filePath);
-
-                            final String childEntityName = parseChildName(fileContent);
-
-                            final List<String> parents = parseParentsNames(fileContent);
-                            locker.lock();
-                            final List<String> classes = inheritanceIndex.getOrDefault(fileContent, new ArrayList<>());
-
-                            classes.addAll(parents);
-
-                            inheritanceIndex.put(childEntityName, classes);
-
-                        } finally {
-                            latch.countDown();
-                            locker.unlock();
-                        }
-                    });
-
-                    thread.start();
-
-                }
-
-                try {
-                    latch.await();
-                } catch (InterruptedException e) {
-                    System.out.println(e);
-                }
-
+            for (String filePath : javaFiles) {
+                new Thread(() -> {
+                    processFile(filePath, inheritanceIndex);
+                    latch.countDown();
+                }).start();
             }
 
-            inheritanceIndex.forEach((className, parents) -> {
-                System.out.println(className + " -> "
-                        + parents);
-            });
-        } catch (IOException e) {
+            latch.await();
+            printInheritanceIndex(inheritanceIndex);
+        } catch (IOException | InterruptedException e) {
             System.out.println(e);
-
         }
     }
 
-    public static String processFile(Path path) {
-
-        final String file = load(path);
-
-        final Boolean isValidFile = filterFile(file);
-
-        if (!isValidFile) {
-            return "";
-        }
-
-        return file;
-
-    }
-
-    private static Boolean filterFile(String fileContent) {
-
-        return fileContent.contains("class")
-                || fileContent.contains("interface")
-                || fileContent.contains("extends")
-                || fileContent.contains("implements");
-    }
-
-    private static String load(Path path) {
-
-        var text = "";
+    private static void processFile(String filePath, Map<String, List<String>> inheritanceIndex) {
         try {
-            text = new String(
-                    Files.readAllBytes(path));
+            List<String> lines = Files.readAllLines(Paths.get(filePath));
+            String className = null;
+
+            for (String line : lines) {
+                line = line.trim();
+                Matcher classMatcher = Pattern.compile("^(class|interface)\\s+(\\w+)").matcher(line);
+                if (classMatcher.find()) {
+                    className = classMatcher.group(2);
+                }
+                Matcher extendsMatcher = Pattern.compile("extends\\s+(\\w+)").matcher(line);
+                if (extendsMatcher.find() && className != null) {
+                    String parentClass = extendsMatcher.group(1);
+
+                    updateInheritanceIndex(parentClass, className, inheritanceIndex);
+                }
+
+                Matcher implementsMatcher = Pattern.compile("implements\\s+([\\w\\s,]+)").matcher(line);
+                if (implementsMatcher.find() && className != null) {
+                    String[] interfaces = implementsMatcher.group(1).split(",");
+                    for (String iface : interfaces) {
+                        updateInheritanceIndex(iface.trim(), className, inheritanceIndex);
+                    }
+                }
+            }
         } catch (IOException e) {
             System.out.println(e);
-
         }
-
-        return text;
     }
 
-    private static String parseChildName(String fileContent) {
-
-        Pattern pattern = Pattern.compile("class\\s+(\\w+)|interface\\s+(\\w+)");
-        Matcher matcher = pattern.matcher(fileContent);
-        var childName = "";
-        if (matcher.find()) {
-            childName = matcher.group();
-        }
-
-        return childName;
+    private static void printInheritanceIndex(Map<String, List<String>> inheritanceIndex) {
+        inheritanceIndex.forEach((key, value) -> {
+            System.out.println(key + " -> " + value.stream().collect(Collectors.joining(", ")));
+        });
     }
 
-    private static List<String> parseParentsNames(String fileContent) {
+    private static void updateInheritanceIndex(String key, String className, Map<String, List<String>> inheritanceIndex) {
+        lock.lock();
+        try {
 
-        Pattern pattern
-                = Pattern.compile("extends\\s+(.+)|implements\\s+(.+)");
-        Matcher matcher = pattern.matcher(fileContent);
-
-        List<String> parentNames = new ArrayList<>();
-
-        if (matcher.find()) {
-            String match = matcher.group();
-
-            List<String> rawParentNames = new ArrayList<>(Arrays.asList(match.split("extends\\s+|implements\\s+|\\{")));
-
-            List<String> filteredParentNames = rawParentNames.stream().map(String::trim).filter((string) -> {
-                return !string.isEmpty();
-            }).collect(Collectors.toList());
-
-            parentNames.addAll(filteredParentNames);
-
+            final List<String> classes = inheritanceIndex.getOrDefault(key, new ArrayList<>());
+            classes.add(className);
+            inheritanceIndex.put(key, classes);
+        } finally {
+            lock.unlock();
         }
-        return parentNames;
     }
+
 }

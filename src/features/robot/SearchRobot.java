@@ -2,103 +2,69 @@ package src.features.robot;
 
 import java.io.IOException;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 public class SearchRobot {
 
     public static void main(String[] args) {
-        String projectPath = "unknownpackage";
-        buildInheritanceIndex(projectPath);
+        String directoryPath = "unknownpackage";
+        Map<String, List<String>> inheritanceIndex = new HashMap<>();
+
+        try {
+            Files.walk(Paths.get(directoryPath))
+                    .filter(Files::isRegularFile)
+                    .filter(file -> file.toString().endsWith(".java"))
+                    .forEach(file -> processFile(file.toString(), inheritanceIndex));
+
+            printInheritanceIndex(inheritanceIndex);
+        } catch (IOException e) {
+            System.out.println(e);
+        }
     }
 
-    public static void buildInheritanceIndex(String projectPath) {
+    private static void processFile(String filePath, Map<String, List<String>> inheritanceIndex) {
         try {
-            Map<String, List<String>> inheritanceIndex = new HashMap<>();
-            try (Stream<Path> pathStream
-                    = Files.walk(Paths.get(projectPath))) {
-                pathStream.filter(Files::isRegularFile).map(path -> load(path)).filter((fileContent -> filterFile(fileContent)))
-                        .forEach(rawString -> {
-                            final String childEntityName = parseChildName(rawString);
+            List<String> lines = Files.readAllLines(Paths.get(filePath));
+            String className = null;
 
-                            final List<String> parents = parseParentsNames(rawString);
+            for (String line : lines) {
+                line = line.trim();
+                Matcher classMatcher = Pattern.compile("^(class|interface)\\s+(\\w+)").matcher(line);
+                if (classMatcher.find()) {
+                    className = classMatcher.group(2);
+                }
+                Matcher extendsMatcher = Pattern.compile("extends\\s+(\\w+)").matcher(line);
+                if (extendsMatcher.find() && className != null) {
+                    String parentClass = extendsMatcher.group(1);
 
-                            final List<String> classes = inheritanceIndex.getOrDefault(rawString, new ArrayList<>());
+                    final List<String> classes = inheritanceIndex.getOrDefault(parentClass, new ArrayList<>());
+                    classes.add(className);
+                    inheritanceIndex.put(parentClass, classes);
+                }
 
-                            classes.addAll(parents);
+                Matcher implementsMatcher = Pattern.compile("implements\\s+([\\w\\s,]+)").matcher(line);
+                if (implementsMatcher.find() && className != null) {
+                    String[] interfaces = implementsMatcher.group(1).split(",");
+                    for (String iface : interfaces) {
 
-                            inheritanceIndex.put(childEntityName, classes);
-                        });
+                        final List<String> classes = inheritanceIndex.getOrDefault(iface.trim(), new ArrayList<>());
+                        classes.add(className);
+                        inheritanceIndex.put(iface.trim(), classes);
+                    }
+                }
             }
-            inheritanceIndex.forEach((className, parents) -> {
-                System.out.println(className + " -> "
-                        + parents);
-            });
         } catch (IOException e) {
             System.out.println(e);
-
         }
     }
 
-    private static Boolean filterFile(String fileContent) {
-
-        return fileContent.contains("class")
-                || fileContent.contains("interface")
-                || fileContent.contains("extends")
-                || fileContent.contains("implements");
-    }
-
-    private static String load(Path path) {
-
-        var text = "";
-        try {
-            text = new String(
-                    Files.readAllBytes(path));
-        } catch (IOException e) {
-            System.out.println(e);
-
-        }
-
-        return text;
-    }
-
-    private static String parseChildName(String fileContent) {
-
-        Pattern pattern = Pattern.compile("class\\s+(\\w+)|interface\\s+(\\w+)");
-        Matcher matcher = pattern.matcher(fileContent);
-        var childName = "";
-        if (matcher.find()) {
-            childName = matcher.group();
-        }
-
-        return childName;
-    }
-
-    private static List<String> parseParentsNames(String fileContent) {
-
-        Pattern pattern
-                = Pattern.compile("extends\\s+(.+)|implements\\s+(.+)");
-        Matcher matcher = pattern.matcher(fileContent);
-
-        List<String> parentNames = new ArrayList<>();
-
-        if (matcher.find()) {
-            String match = matcher.group();
-
-            List<String> rawParentNames = new ArrayList<>(Arrays.asList(match.split("extends\\s+|implements\\s+|\\{")));
-
-            List<String> filteredParentNames = rawParentNames.stream().map(String::trim).filter((string) -> {
-                return !string.isEmpty();
-            }).collect(Collectors.toList());
-
-            parentNames.addAll(filteredParentNames);
-
-        }
-        return parentNames;
+    private static void printInheritanceIndex(Map<String, List<String>> inheritanceIndex) {
+        inheritanceIndex.forEach((key, value) -> {
+            System.out.println(key + " -> " + value.stream().collect(Collectors.joining(", ")));
+        });
     }
 }

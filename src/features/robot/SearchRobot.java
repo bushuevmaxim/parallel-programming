@@ -5,7 +5,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
-import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -17,7 +21,7 @@ public class SearchRobot {
 
     public static void main(String[] args) {
         String directoryPath = "/Users/max/Documents/spring-framework-main";
-        Map<String, List<String>> inheritanceIndex = new HashMap<>();
+        ReverseInheritanceIndex inheritanceIndex = new ReverseInheritanceIndex();
 
         try {
             List<String> javaFiles = Files.walk(Paths.get(directoryPath))
@@ -26,23 +30,44 @@ public class SearchRobot {
                     .map(Path::toString)
                     .collect(Collectors.toList());
 
-            CountDownLatch latch = new CountDownLatch(javaFiles.size());
+            ExecutorService executor = Executors.newFixedThreadPool(Thread.activeCount());
+
+            List<Callable<ReverseInheritanceIndex>> tasks = new ArrayList<>();
 
             for (String filePath : javaFiles) {
-                new Thread(() -> {
-                    processFile(filePath, inheritanceIndex);
-                    latch.countDown();
-                }).start();
+                tasks.add(() -> processFile(filePath));
             }
 
-            latch.await();
+            List<Future<ReverseInheritanceIndex>> futures = new ArrayList<>();
+
+            for (Callable<ReverseInheritanceIndex> task : tasks) {
+
+                futures.add(executor.submit(task));
+            }
+
+            executor.shutdown();
+
+            for (Future<ReverseInheritanceIndex> future : futures) {
+                try {
+                    ReverseInheritanceIndex partInheritedIndex = future.get();
+                    updateInheritanceIndex(inheritanceIndex, partInheritedIndex);
+                } catch (InterruptedException | ExecutionException e) {
+                    System.out.println(e);
+
+                }
+
+            }
+
             printInheritanceIndex(inheritanceIndex);
-        } catch (IOException | InterruptedException e) {
+
+        } catch (IOException e) {
             System.out.println(e);
         }
     }
 
-    private static void processFile(String filePath, Map<String, List<String>> inheritanceIndex) {
+    private static ReverseInheritanceIndex processFile(String filePath) {
+        ReverseInheritanceIndex inheritanceIndex = new ReverseInheritanceIndex();
+
         try {
             List<String> lines = Files.readAllLines(Paths.get(filePath));
             String className = null;
@@ -57,38 +82,67 @@ public class SearchRobot {
                 if (extendsMatcher.find() && className != null) {
                     String parentClass = extendsMatcher.group(1);
 
-                    updateInheritanceIndex(parentClass, className, inheritanceIndex);
+                    inheritanceIndex.update(parentClass, className);
                 }
 
                 Matcher implementsMatcher = Pattern.compile("implements\\s+([\\w\\s,]+)").matcher(line);
                 if (implementsMatcher.find() && className != null) {
                     String[] interfaces = implementsMatcher.group(1).split(",");
                     for (String iface : interfaces) {
-                        updateInheritanceIndex(iface.trim(), className, inheritanceIndex);
+
+                        inheritanceIndex.update(iface.trim(), className);
                     }
                 }
             }
         } catch (IOException e) {
             System.out.println(e);
         }
+
+        return inheritanceIndex;
     }
 
-    private static void printInheritanceIndex(Map<String, List<String>> inheritanceIndex) {
-        inheritanceIndex.forEach((key, value) -> {
+    private static void printInheritanceIndex(ReverseInheritanceIndex inheritanceIndex) {
+        inheritanceIndex.get().forEach((key, value) -> {
             System.out.println(key + " -> " + value.stream().collect(Collectors.joining(", ")));
         });
     }
 
-    private static void updateInheritanceIndex(String key, String className, Map<String, List<String>> inheritanceIndex) {
+    private static void updateInheritanceIndex(ReverseInheritanceIndex inheritanceIndex, ReverseInheritanceIndex partInheritanceIndex) {
+
         lock.lock();
         try {
 
-            final List<String> classes = inheritanceIndex.getOrDefault(key, new ArrayList<>());
-            classes.add(className);
-            inheritanceIndex.put(key, classes);
+            partInheritanceIndex.get().forEach((parent, children) -> {
+
+                children.forEach(child -> inheritanceIndex.update(parent, child));
+            });
+
         } finally {
             lock.unlock();
         }
+
+    }
+
+}
+
+class ReverseInheritanceIndex {
+
+    private final Map<String, List<String>> _map;
+
+    public ReverseInheritanceIndex() {
+        _map = new HashMap<>();
+    }
+
+    public Map<String, List<String>> get() {
+        return _map;
+    }
+
+    public void update(String parent, String child) {
+
+        final List<String> classes;
+        classes = _map.getOrDefault(parent, new ArrayList<>());
+        classes.add(child);
+        _map.put(parent, classes);
     }
 
 }

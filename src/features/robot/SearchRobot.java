@@ -33,7 +33,7 @@ public class SearchRobot {
 
             for (String line : lines) {
                 line = line.trim();
-                Matcher classMatcher = Pattern.compile("^(class|interface)\\s+(\\w+)").matcher(line);
+                Matcher classMatcher = Pattern.compile("(class|interface)\\s+(\\w+)").matcher(line);
                 if (classMatcher.find()) {
                     className = classMatcher.group(2);
                 }

@@ -5,11 +5,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.MatchResult;
 import java.util.regex.Matcher;
@@ -20,7 +22,10 @@ public class SearchRobot {
 
     private static final ReentrantLock lock = new ReentrantLock();
 
-    public static void main(String[] args) {
+    private static BlockingQueue<Callable<ReverseInheritanceIndex>> taskQueue;
+    private static BlockingQueue<ReverseInheritanceIndex> resultsQueue;
+
+    public static void main(String[] args) throws InterruptedException {
         String directoryPath = "/Users/max/Documents/spring-framework-main";
         ReverseInheritanceIndex inheritanceIndex = new ReverseInheritanceIndex();
 
@@ -29,32 +34,39 @@ public class SearchRobot {
                     .filter(Files::isRegularFile)
                     .filter(file -> file.toString().endsWith(".java"))
                     .collect(Collectors.toList());
+            int countTasks = javaFiles.size();
+            taskQueue = new LinkedBlockingQueue<>(countTasks);
+
+            for (Path filePath : javaFiles) {
+                taskQueue.add(() -> processFile(filePath));
+            }
 
             ExecutorService executor = Executors.newFixedThreadPool(Thread.activeCount());
 
-            List<Callable<ReverseInheritanceIndex>> tasks = new ArrayList<>();
+            resultsQueue = new LinkedBlockingQueue<>(countTasks);
 
-            for (Path filePath : javaFiles) {
-                tasks.add(() -> processFile(filePath));
-            }
+            CountDownLatch latch = new CountDownLatch(countTasks);
 
-            List<Future<ReverseInheritanceIndex>> futures = new ArrayList<>();
+            for (Callable<ReverseInheritanceIndex> task : taskQueue) {
 
-            for (Callable<ReverseInheritanceIndex> task : tasks) {
-
-                futures.add(executor.submit(task));
-            }
-
-            executor.shutdown();
-
-            for (Future<ReverseInheritanceIndex> future : futures) {
+                ReverseInheritanceIndex partInheritedIndex;
                 try {
-                    ReverseInheritanceIndex partInheritedIndex = future.get();
-                    updateInheritanceIndex(inheritanceIndex, partInheritedIndex);
+                    partInheritedIndex = executor.submit(task).get();
+                    resultsQueue.add(partInheritedIndex);
                 } catch (InterruptedException | ExecutionException e) {
                     System.out.println(e);
-
+                } finally {
+                    latch.countDown();
                 }
+
+            }
+
+            latch.await();
+            executor.shutdown();
+
+            for (ReverseInheritanceIndex partInheritedIndex : resultsQueue) {
+
+                updateInheritanceIndex(inheritanceIndex, partInheritedIndex);
 
             }
 
